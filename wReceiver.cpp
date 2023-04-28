@@ -7,6 +7,7 @@
 #include <fstream>
 #include <chrono>
 #include <algorithm>
+#include <vector>
 #include "PacketHeader.h"
 #include "crc32.h"
 
@@ -72,10 +73,10 @@ int main(int argc, char *argv[])
       }
 
       // initialize variables
-      int status = 0;
-      int ack_num = 0;
-      int start_num = 0;
-      int file_num = 0;
+      unsigned int ack_num = 0;
+      unsigned int start_num = 0;
+      unsigned int file_num = 0;
+      FILE *file = NULL;
 
       std::vector<packet> window;
 
@@ -87,7 +88,7 @@ int main(int argc, char *argv[])
             if (n > 0)
             {
                   // check if packet is corrupted
-                  if (p.header.crc != crc32((unsigned char *)&p.data, p.header.len) && p.header.type == 2)
+                  if (p.header.checksum != crc32((unsigned char *)&p.data, p.header.length) && p.header.type == 2)
                   {
                         printf("Packet corrupted\n");
                         continue;
@@ -103,20 +104,20 @@ int main(int argc, char *argv[])
                   {
                         printf("START packet received\n");
                         // log <type> <seqNum> <length> <checksum>
-                        fprintf(logFile, "%d %d %d %d\n", p.header.type, p.header.seqNum, p.header.len, p.header.crc);
+                        fprintf(logFile, "%d %d %d %d\n", p.header.type, p.header.seqNum, p.header.length, p.header.checksum);
                         // send ACK packet
                         struct packet ack;
                         ack.header.type = 3;
                         ack.header.seqNum = p.header.seqNum;
-                        ack.header.len = 0;
-                        ack.header.crc = 0;
+                        ack.header.length = 0;
+                        ack.header.checksum = 0;
                         sendto(sockfd, (const char *)&ack, sizeof(ack), MSG_CONFIRM, (const struct sockaddr *)&cliaddr, len);
                         printf("ACK packet sent\n");
 
                         // create file: <output-dir>/FILE-<file-num>.out
                         char filename[100];
                         sprintf(filename, "%s/FILE-%d.out", outputDir, file_num);
-                        FILE *file = fopen(filename, "w");
+                        file = fopen(filename, "w");
                         if (file == NULL)
                         {
                               perror("Error");
@@ -129,24 +130,24 @@ int main(int argc, char *argv[])
                   {
                         printf("END packet received\n");
                         // log <type> <seqNum> <length> <checksum>
-                        fprintf(logFile, "%d %d %d %d\n", p.header.type, p.header.seqNum, p.header.len, p.header.crc);
+                        fprintf(logFile, "%d %d %d %d\n", p.header.type, p.header.seqNum, p.header.length, p.header.checksum);
                         // send ACK packet
                         struct packet ack;
                         ack.header.type = 3;
                         ack.header.seqNum = p.header.seqNum;
-                        ack.header.len = 0;
-                        ack.header.crc = 0;
+                        ack.header.length = 0;
+                        ack.header.checksum = 0;
                         sendto(sockfd, (const char *)&ack, sizeof(ack), MSG_CONFIRM, (const struct sockaddr *)&cliaddr, len);
                         printf("ACK packet sent\n");
                         break;
                   }
                   // handle DATA packet
-                  // implement cumulative ACK
+                  // send cumulative ACK after receiving all sequential packets
                   else if (p.header.type == 2)
                   {
                         printf("DATA packet received\n");
                         // log <type> <seqNum> <length> <checksum>
-                        fprintf(logFile, "%d %d %d %d\n", p.header.type, p.header.seqNum, p.header.len, p.header.crc);
+                        fprintf(logFile, "%d %d %d %d\n", p.header.type, p.header.seqNum, p.header.length, p.header.checksum);
                         // check if the packet is in the window
                         if (p.header.seqNum >= start_num && p.header.seqNum < start_num + window_size)
                         {
@@ -172,66 +173,68 @@ int main(int argc, char *argv[])
                               struct packet ack;
                               ack.header.type = 3;
                               ack.header.seqNum = p.header.seqNum;
-                              ack.header.len = 0;
-                              ack.header.crc = 0;
+                              ack.header.length = 0;
+                              ack.header.checksum = 0;
                               sendto(sockfd, (const char *)&ack, sizeof(ack), MSG_CONFIRM, (const struct sockaddr *)&cliaddr, len);
                               printf("ACK packet sent\n");
-                              // check if the first packet in the window is the next packet to be written
-                              if (window[0].header.seqNum == start_num)
+                              // check if the window is full
+                              if (window.size() == window_size)
                               {
-                                    // write the packet to the file
-                                    fwrite(window[0].data, 1, window[0].header.len, file);
-                                    // update start_num
-                                    start_num++;
-                                    // remove the packet from the window
-                                    window.erase(window.begin());
+                                    // write the data to the file
+                                    for (int i = 0; i < window.size(); i++)
+                                    {
+                                          fwrite(window[i].data, sizeof(char), window[i].header.length, file);
+                                    }
+                                    // update the start number
+                                    start_num = window[0].header.seqNum + window[0].header.length;
+                                    // clear the window
+                                    window.clear();
                               }
                         }
+                        // if the packet is not in the window, send ACK for the last packet in the window
                         else
                         {
                               // send ACK packet
                               struct packet ack;
                               ack.header.type = 3;
-                              ack.header.seqNum = p.header.seqNum;
-                              ack.header.len = 0;
-                              ack.header.crc = 0;
+                              ack.header.seqNum = start_num - 1;
+                              ack.header.length = 0;
+                              ack.header.checksum = 0;
+                        }
+                  }
+                  else
+                  {
+                        // check if the window is empty
+                        if (window.empty())
+                        {
+                              printf("Timeout\n");
+                              // send ACK packet
+                              struct packet ack;
+                              ack.header.type = 3;
+                              ack.header.seqNum = ack_num;
+                              ack.header.length = 0;
+                              ack.header.checksum = 0;
+                              sendto(sockfd, (const char *)&ack, sizeof(ack), MSG_CONFIRM, (const struct sockaddr *)&cliaddr, len);
+                              printf("ACK packet sent\n");
+                        }
+                        else
+                        {
+                              printf("Timeout\n");
+                              // send ACK packet
+                              struct packet ack;
+                              ack.header.type = 3;
+                              ack.header.seqNum = window[0].header.seqNum;
+                              ack.header.length = 0;
+                              ack.header.checksum = 0;
                               sendto(sockfd, (const char *)&ack, sizeof(ack), MSG_CONFIRM, (const struct sockaddr *)&cliaddr, len);
                               printf("ACK packet sent\n");
                         }
                   }
             }
-            else
-            {
-                  // check if the window is empty
-                  if (window.empty())
-                  {
-                        printf("Timeout\n");
-                        // send ACK packet
-                        struct packet ack;
-                        ack.header.type = 3;
-                        ack.header.seqNum = ack_num;
-                        ack.header.len = 0;
-                        ack.header.crc = 0;
-                        sendto(sockfd, (const char *)&ack, sizeof(ack), MSG_CONFIRM, (const struct sockaddr *)&cliaddr, len);
-                        printf("ACK packet sent\n");
-                  }
-                  else
-                  {
-                        printf("Timeout\n");
-                        // send ACK packet
-                        struct packet ack;
-                        ack.header.type = 3;
-                        ack.header.seqNum = window[0].header.seqNum;
-                        ack.header.len = 0;
-                        ack.header.crc = 0;
-                        sendto(sockfd, (const char *)&ack, sizeof(ack), MSG_CONFIRM, (const struct sockaddr *)&cliaddr, len);
-                        printf("ACK packet sent\n");
-                  }
-            }
+            // close the log file
+            fclose(logFile);
+            // close the socket
+            close(sockfd);
+            return 0;
       }
-      // close the log file
-      fclose(logFile);
-      // close the socket
-      close(sockfd);
-      return 0;
 }

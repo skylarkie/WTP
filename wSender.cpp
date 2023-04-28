@@ -97,20 +97,15 @@ int main(int argc, char *argv[])
       // wait for START ACK
       struct packet start_ack_packet;
       memset(&start_ack_packet, 0, sizeof(start_ack_packet));
-      // set start time
-      std::chrono::milliseconds start_time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch());
-      double time_elapsed = 0;
-      while (time_elapsed <= 500)
+
+      int attempts = 0;
+      while (attempts <= 10)
       {
             if (recvfrom(s, &start_ack_packet, sizeof(start_ack_packet), 0, NULL, NULL) == -1)
             {
                   perror("Fail to receive START ACK packet.\n");
                   exit(1);
             }
-            // set current time
-            std::chrono::milliseconds current_time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch());
-            time_elapsed = static_cast<double>(current_time.count() - start_time.count());
-
             if (start_ack_packet.header.type == 2 && start_ack_packet.header.seqNum == rand_num)
             {
                   printf("START ACK received.\n");
@@ -122,10 +117,11 @@ int main(int argc, char *argv[])
                   printf("START ACK not received.\n");
                   fprintf(log, "%d %d %d %d\n", start_ack_packet.header.type, start_ack_packet.header.seqNum, start_ack_packet.header.length, start_ack_packet.header.checksum);
             }
+            attempts++;
       }
-      if (time_elapsed > 500)
+      if (attempts > 10)
       {
-            printf("START Timeout.\n");
+            printf("Fail to receive START ACK packet.\n");
             exit(1);
       }
 
