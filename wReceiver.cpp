@@ -8,8 +8,8 @@
 #include <chrono>
 #include <algorithm>
 #include <vector>
-#include "PacketHeader.h"
-#include "crc32.h"
+#include "../starter_files/PacketHeader.h"
+#include "../starter_files/crc32.h"
 
 #define MAX_BUF_SIZE 1456
 
@@ -56,20 +56,11 @@ int main(int argc, char *argv[])
       }
 
       // open log file
-      FILE *logFile = fopen(log, "w");
+      FILE *logFile = fopen(log, "w+");
       if (logFile == NULL)
       {
             perror("Error");
             exit(EXIT_FAILURE);
-      }
-
-      // set timeout
-      struct timeval tv;
-      tv.tv_sec = 0;
-      tv.tv_usec = 500000;
-      if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0)
-      {
-            perror("Error");
       }
 
       // initialize variables
@@ -81,7 +72,7 @@ int main(int argc, char *argv[])
       std::vector<packet> window;
 
       // receive packets
-      while (1)
+      while (true)
       {
             struct packet p;
             int n = recvfrom(sockfd, (char *)&p, sizeof(p), MSG_WAITALL, (struct sockaddr *)&cliaddr, &len);
@@ -112,7 +103,7 @@ int main(int argc, char *argv[])
                         ack.header.length = 0;
                         ack.header.checksum = 0;
                         sendto(sockfd, (const char *)&ack, sizeof(ack), MSG_CONFIRM, (const struct sockaddr *)&cliaddr, len);
-                        printf("ACK packet sent\n");
+                        printf("START ACK packet sent\n");
 
                         // create file: <output-dir>/FILE-<file-num>.out
                         char filename[100];
@@ -145,8 +136,8 @@ int main(int argc, char *argv[])
                   // send cumulative ACK after receiving all sequential packets
                   else if (p.header.type == 2)
                   {
-                        printf("DATA packet received\n");
                         // log <type> <seqNum> <length> <checksum>
+                        printf("rec %d %d %d %d\n", p.header.type, p.header.seqNum, p.header.length, p.header.checksum);
                         fprintf(logFile, "%d %d %d %d\n", p.header.type, p.header.seqNum, p.header.length, p.header.checksum);
                         // check if the packet is in the window
                         if (p.header.seqNum >= start_num && p.header.seqNum < start_num + window_size)
@@ -231,10 +222,10 @@ int main(int argc, char *argv[])
                         }
                   }
             }
-            // close the log file
-            fclose(logFile);
-            // close the socket
-            close(sockfd);
-            return 0;
       }
+      // close the log file
+      fclose(logFile);
+      // close the socket
+      close(sockfd);
+      return 0;
 }

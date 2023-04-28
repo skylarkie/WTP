@@ -11,8 +11,8 @@
 #include <fstream>
 #include <chrono>
 #include <algorithm>
-#include "PacketHeader.h"
-#include "crc32.h"
+#include "../starter_files/PacketHeader.h"
+#include "../starter_files/crc32.h"
 
 #define MAX_BUF_SIZE 1456
 
@@ -86,7 +86,8 @@ int main(int argc, char *argv[])
       start_packet.header.type = 0;
       start_packet.header.length = 0;
       start_packet.header.checksum = 0;
-      if (sendto(s, &start_packet, sizeof(start_packet), 0, (struct sockaddr *)&addr_sender, sizeof(addr_sender)) == -1)
+      unsigned int slen = sizeof(addr_sender);
+      if (sendto(s, &start_packet, sizeof(start_packet), 0, (struct sockaddr *)&addr_sender, slen) == -1)
       {
             perror("Fail to send START packet.\n");
             exit(1);
@@ -101,12 +102,12 @@ int main(int argc, char *argv[])
       int attempts = 0;
       while (attempts <= 10)
       {
-            if (recvfrom(s, &start_ack_packet, sizeof(start_ack_packet), 0, NULL, NULL) == -1)
+            if (recvfrom(s, &start_ack_packet, sizeof(start_ack_packet), 0, (struct sockaddr *)&addr_sender, &slen) == -1)
             {
                   perror("Fail to receive START ACK packet.\n");
                   exit(1);
             }
-            if (start_ack_packet.header.type == 2 && start_ack_packet.header.seqNum == rand_num)
+            if (start_ack_packet.header.type == 3 && start_ack_packet.header.seqNum == rand_num)
             {
                   printf("START ACK received.\n");
                   fprintf(log, "%d %d %d %d\n", start_ack_packet.header.type, start_ack_packet.header.seqNum, start_ack_packet.header.length, start_ack_packet.header.checksum);
@@ -134,13 +135,16 @@ int main(int argc, char *argv[])
             struct packet data_packet;
             memset(&data_packet, 0, sizeof(data_packet));
             data_packet.header.seqNum = seq_num;
-            data_packet.header.type = 1;
+            data_packet.header.type = 2;
             data_packet.header.length = fread(data_packet.data, 1, MAX_BUF_SIZE, input);
-            data_packet.header.checksum = crc32((unsigned char *)&data_packet, sizeof(data_packet));
+            data_packet.header.checksum = crc32((unsigned char *)&data_packet.data, data_packet.header.length);
             // implement sliding window and only cumulative ACK is sent
+            printf("seq_num: %d, max_seq_num: %d\n", seq_num, max_seq_num);
             if (data_packet.header.length == 0)
             {
-                  max_seq_num = seq_num;
+                  // min of max_seq_num and seq_num + window_size
+                  max_seq_num = (max_seq_num < seq_num + window_size) ? max_seq_num : seq_num;
+                  max_seq_num -= 1;
             }
             if (window < window_size && seq_num <= max_seq_num)
             {
@@ -149,7 +153,7 @@ int main(int argc, char *argv[])
                         perror("Fail to send DATA packet.\n");
                         exit(1);
                   }
-                  printf("DATA packet sent.\n");
+                  printf("send %d %d %d %d\n", data_packet.header.type, data_packet.header.seqNum, data_packet.header.length, data_packet.header.checksum);
                   fprintf(log, "%d %d %d %d\n", data_packet.header.type, data_packet.header.seqNum, data_packet.header.length, data_packet.header.checksum);
                   window++;
                   seq_num++;
@@ -171,7 +175,7 @@ int main(int argc, char *argv[])
                         // set current time
                         std::chrono::milliseconds current_time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch());
                         time_elapsed = static_cast<double>(current_time.count() - start_time.count());
-                        if (ack_packet.header.type == 2 && ack_packet.header.seqNum >= ack_num)
+                        if (ack_packet.header.type == 3 && ack_packet.header.seqNum >= ack_num)
                         {
                               printf("DATA ACK received.\n");
                               seq_num = ack_packet.header.seqNum + 1;
@@ -180,7 +184,7 @@ int main(int argc, char *argv[])
                               fprintf(log, "%d %d %d %d\n", ack_packet.header.type, ack_packet.header.seqNum, ack_packet.header.length, ack_packet.header.checksum);
                               break;
                         }
-                        if (ack_packet.header.type == 2 && ack_packet.header.seqNum == max_seq_num)
+                        if (ack_packet.header.type == 3 && ack_packet.header.seqNum >= max_seq_num)
                         {
                               printf("final DATA ACK received.\n");
                               DONE = 1;
@@ -225,7 +229,7 @@ int main(int argc, char *argv[])
             std::chrono::milliseconds current_time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch());
             time_elapsed = static_cast<double>(current_time.count() - start_time.count());
 
-            if (end_ack_packet.header.type == 2 && end_ack_packet.header.seqNum == rand_num)
+            if (end_ack_packet.header.type == 3 && end_ack_packet.header.seqNum == rand_num)
             {
                   printf("END ACK received.\n");
                   fprintf(log, "%d %d %d %d\n", end_ack_packet.header.type, end_ack_packet.header.seqNum, end_ack_packet.header.length, end_ack_packet.header.checksum);

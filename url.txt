@@ -1,15 +1,4 @@
 https://github.com/skylarkie/WTP.git
 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
 
-CXX = g++
-CXXFLAGS = -g -std=c++11 -pedantic
-
-all: miProxy
-miProxy: miProxy.cpp
-        $(CXX) $(CXXFLAGS) miProxy.cpp -o miProxy
-
-clean:
-        rm -rf miProxy *.dSYM
-
-.PHONY: clean
-
+git remote set-url origin https://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@github.com/skylarkie/WTP.git
