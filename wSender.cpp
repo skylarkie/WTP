@@ -38,7 +38,7 @@ int main(int argc, char *argv[])
       char *log_file = argv[5];
 
       // open log file & input file
-      FILE *log = fopen(log_file, "w");
+      FILE *log = fopen(log_file, "w+");
       if (log == NULL)
       {
             printf("Fail to open log file.\n");
