@@ -1,16 +1,12 @@
-CC = gcc
-CXX = g++
-CFLAGS = -Wall -Wextra -pedantic -std=c++11
+BASE_DIR = WTP-base/
+OPT_DIR = WTP-opt/
 
 .PHONY: clean all
 
-all: wSender wReceiver
+all: base
+
+base: 
+	$(MAKE) -C $(BASE_DIR)
 
 clean:
-	rm -f wSender wReceiver $(OBJS)
-
-wSender: wSender.cpp ../starter_files/PacketHeader.h ../starter_files/crc32.h
-	$(CXX) $(CFLAGS) -o wSender wSender.cpp
-
-wReceiver: wReceiver.cpp ../starter_files/PacketHeader.h ../starter_files/crc32.h
-	$(CXX) $(CFLAGS) -o wReceiver wReceiver.cpp
+	$(MAKE) -C $(BASE_DIR) clean
