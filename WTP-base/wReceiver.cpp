@@ -163,6 +163,7 @@ int main(int argc, char *argv[])
                                     continue;
                               }
                               // add the packet to the window
+                              printf("here\n");
                               window.push_back(p);
                               // send ACK packet
                               struct packet ack;

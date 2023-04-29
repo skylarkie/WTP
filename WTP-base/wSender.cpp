@@ -11,6 +11,7 @@
 #include <fstream>
 #include <chrono>
 #include <algorithm>
+#include <vector>
 #include "../starter_files/PacketHeader.h"
 #include "../starter_files/crc32.h"
 
@@ -48,8 +49,8 @@ int main(int argc, char *argv[])
       char *log_file = argv[5];
 
       // open input file
-      std::ifstream file(input_file, std::ios::binary | std::ios::ate);
-      if (!file.is_open())
+      FILE *fp = fopen(input_file, "rb");
+      if (fp == NULL)
       {
             perror("Fail to open input file.\n");
             exit(1);
@@ -80,8 +81,8 @@ int main(int argc, char *argv[])
       // send the file
       unsigned int seq_num = 0;
       unsigned int rand_num = rand() % 2048;
-      unsigned int ack_num = 0;
-      unsigned int max_seq_num = 65535;
+      // unsigned int ack_num = 0;
+      // unsigned int max_seq_num = 65535;
 
       // send START packet
       struct packet start_packet;
@@ -130,75 +131,59 @@ int main(int argc, char *argv[])
       }
 
       // send DATA packets
-      int DONE = 0;
-      unsigned int window = 0;
-      while (!DONE)
+      // int DONE = 0;
+      // unsigned int window = 0;
+      std::vector<struct packet> packets;
+      // count the number of packets
+      while (!feof(fp))
       {
-            // read data from file
-            struct packet data_packet;
-            memset(&data_packet, 0, sizeof(data_packet));
-            file.read(data_packet.data, MAX_BUF_SIZE);
-            data_packet.header.seqNum = seq_num;
-            data_packet.header.type = 2;
-            data_packet.header.length = file.gcount();
-            data_packet.header.checksum = crc32((unsigned char *)&data_packet.data, data_packet.header.length);
-            bool achieved = false;
-            // implement sliding window and only cumulative ACK is sent
-            printf("seq_num: %d, max_seq_num: %d\n", seq_num, max_seq_num);
-            if (data_packet.header.length == 0 && !achieved)
+            struct packet p;
+            memset(&p, 0, sizeof(p));
+            p.header.seqNum = seq_num;
+            p.header.type = 2;
+            p.header.length = fread(p.data, 1, MAX_BUF_SIZE, fp);
+            p.header.checksum = crc32((unsigned char *)&p.data, p.header.length);
+            packets.push_back(p);
+            seq_num++;
+      }
+      // implement GBN
+      int base = 0;
+      int next_seq_num = 0;
+      while (base < packets.size())
+      {
+            // send packets
+            while (next_seq_num < base + window_size && next_seq_num < packets.size())
             {
-                  achieved = true;
-                  // min of max_seq_num and seq_num + window_size
-                  max_seq_num = (max_seq_num < seq_num) ? max_seq_num : seq_num;
-                  max_seq_num -= 1;
-            }
-            if (window < window_size && seq_num <= max_seq_num)
-            {
-                  if (sendto(s, &data_packet, sizeof(data_packet), 0, (struct sockaddr *)&addr_sender, sizeof(addr_sender)) == -1)
+                  if (sendto(s, &packets[next_seq_num], sizeof(packets[next_seq_num]), 0, (struct sockaddr *)&addr_sender, slen) == -1)
                   {
                         perror("Fail to send DATA packet.\n");
                         exit(1);
                   }
-                  log_packet(log_file, &data_packet);
-                  window++;
-                  seq_num++;
+                  printf("DATA packet sent.\n");
+                  log_packet(log_file, &packets[next_seq_num]);
+                  next_seq_num++;
+            }
+            // receive ACKs
+            struct packet ack_packet;
+            memset(&ack_packet, 0, sizeof(ack_packet));
+            if (recvfrom(s, &ack_packet, sizeof(ack_packet), 0, (struct sockaddr *)&addr_sender, &slen) == -1)
+            {
+                  // timeout and resend
+                  printf("timeout.\n");
+                  next_seq_num = base;
+                  continue;
+            }
+            printf("ACK packet received.\n");
+            log_packet(log_file, &ack_packet);
+            // shift window according to cumulative ACK
+            if (ack_packet.header.type == 3 && ack_packet.header.seqNum >= base && ack_packet.header.seqNum < base + window_size)
+            {
+                  base = ack_packet.header.seqNum + 1;
             }
             else
             {
-                  struct packet ack_packet;
-                  memset(&ack_packet, 0, sizeof(ack_packet));
-                  // set start time
-                  std::chrono::milliseconds start_time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch());
-                  double time_elapsed = 0;
-                  while (time_elapsed <= 500)
-                  {
-                        if (recvfrom(s, &ack_packet, sizeof(ack_packet), 0, NULL, NULL) == -1)
-                        {
-                              perror("Fail to receive DATA ACK packet.\n");
-                        }
-                        // set current time
-                        std::chrono::milliseconds current_time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch());
-                        time_elapsed = static_cast<double>(current_time.count() - start_time.count());
-                        if (ack_packet.header.type == 3 && ack_packet.header.seqNum >= ack_num)
-                        {
-                              printf("DATA ACK received.\n");
-                              seq_num = ack_packet.header.seqNum + 1;
-                              ack_num = ack_packet.header.seqNum + 1;
-                              window = 0;
-                              log_packet(log_file, &ack_packet);
-                              break;
-                        }
-                        if (ack_packet.header.type == 3 && ack_packet.header.seqNum >= max_seq_num)
-                        {
-                              printf("final DATA ACK received.\n");
-                              DONE = 1;
-                        }
-                  }
-                  if (time_elapsed > 500)
-                  {
-                        seq_num = ack_num;
-                        window = 0;
-                  }
+                  printf("ACK packet not received.\n");
+                  next_seq_num = base;
             }
       }
 
@@ -236,6 +221,7 @@ int main(int argc, char *argv[])
             {
                   printf("END ACK received.\n");
                   log_packet(log_file, &end_ack_packet);
+                  break;
             }
             else
             {
